@@ -21,6 +21,7 @@ import sys
 import struct
 import serial
 import time
+import socket
 import argparse
 import os
 import subprocess
@@ -321,6 +322,57 @@ class ESPROM:
         # It it on the other hand unlikely to fail.
 
 
+class TCPPort:
+    def __init__(self, ip, port):
+        self._s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._s.connect((ip, port))
+
+        # dummy variable
+        self.timeout = 10
+
+    def write(self, bytes):
+        self._s.send(bytes)
+        print bytes
+
+    def read(self, num):
+        data = self._s.recv(num)
+        return data
+
+
+class ESPROMTCP(ESPROM):
+    def __init__(self, ip=None, port=23):
+        self._port = TCPPort(ip=ip, port=port)
+
+    """ Try connecting repeatedly until successful, or giving up """
+    def connect(self):
+        print 'Connecting...'
+
+        for _ in xrange(4):
+            # issue reset-to-bootloader:
+            # RTS = either CH_PD or nRESET (both active low = chip in reset)
+            # DTR = GPIO0 (active low = boot to flasher)
+            # self._port.setDTR(False)
+            # self._port.setRTS(True)
+            time.sleep(0.05)
+            # self._port.setDTR(True)
+            # self._port.setRTS(False)
+            time.sleep(0.05)
+            # self._port.setDTR(False)
+
+            # worst-case latency timer should be 255ms (probably <20ms)
+            # self._port.timeout = 0.3
+            for _ in xrange(4):
+                # try:
+                    # self._port.flushInput()
+                    # self._port.flushOutput()
+                    self.sync()
+                    # self._port.timeout = 5
+                    return
+                # except:
+                #     time.sleep(0.05)
+        raise FatalError('Failed to connect to ESP8266')
+
+
 class ESPFirmwareImage:
 
     def __init__(self, filename=None):
@@ -470,6 +522,17 @@ def main():
     parser = argparse.ArgumentParser(description='ESP8266 ROM Bootloader Utility', prog='esptool')
 
     parser.add_argument(
+        '--tcp-ip', '-i',
+        help='TCP IP',
+        default=None)
+
+    parser.add_argument(
+        '--tcp-port', '-t',
+        type=arg_auto_int,
+        help='TCP port (default 23)',
+        default=23)
+
+    parser.add_argument(
         '--port', '-p',
         help='Serial port device',
         default='/dev/ttyUSB0')
@@ -572,7 +635,10 @@ def main():
     # Create the ESPROM connection object, if needed
     esp = None
     if args.operation not in ('image_info','make_image','elf2image'):
-        esp = ESPROM(args.port, args.baud)
+        if args.tcp_ip:
+            esp = ESPROMTCP(port=args.tcp_port, ip=args.tcp_ip)
+        else:
+            esp = ESPROM(args.port, args.baud)
         esp.connect()
 
     # Do the actual work. Should probably be split into separate functions.
